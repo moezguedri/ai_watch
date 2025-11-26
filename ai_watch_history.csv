@@ -1,0 +1,2 @@
+date,score_global_raw,score_global,benchmark_perf_1y,avg_ai_1y,ai_vs_bench_spread,group_consumer_score,group_gpu_score,group_hyperscaler_score,group_semi_score
+2025-11-26,65.10,65.10,12.36,49.06,36.70,40.20,69.33,55.13,80.00
