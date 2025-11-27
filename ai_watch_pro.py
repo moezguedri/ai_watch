@@ -665,11 +665,21 @@ def send_telegram_alert(message: str) -> None:
 
 # ========= DASHBOARD (MATPLOTLIB) =========
 
-def generate_dashboard(history_file: str, output_dir: str = "dashboard") -> None:
+def generate_dashboard(
+    history_file: str,
+    output_dir: str = "dashboard",
+    snapshot: Optional[AIHealthSnapshot] = None,
+    allocation_weights: Optional[Dict[str, Dict[str, float]]] = None,
+    bubble_risk: Optional[str] = None,
+) -> None:
     """
-    Generate simple PNG and HTML dashboard from history:
-    - global score (raw + smoothed)
-    - group scores over time
+    Generate an investor-friendly dashboard:
+    - Global score (raw + smoothed) over time
+    - Group scores over time
+    - Latest snapshot summary (regime, score, delta)
+    - Latest group scores table
+    - Allocation engine (groups + tickers) tables
+    - Interpretation & actions
     """
     if not os.path.exists(history_file):
         print("[INFO] No history file yet, skipping dashboard generation.")
@@ -677,22 +687,27 @@ def generate_dashboard(history_file: str, output_dir: str = "dashboard") -> None
 
     os.makedirs(output_dir, exist_ok=True)
 
+    # Robust CSV loading
     df = pd.read_csv(
         history_file,
-        on_bad_lines="skip",   # ignore malformed rows
+        on_bad_lines="skip",
         engine="python",
     )
-
     if df.empty:
         print("[INFO] Empty history file, skipping dashboard generation.")
         return
 
     df["date"] = pd.to_datetime(df["date"])
 
-    # Global scores
-    plt.figure()
+    # ---------- TIME-SERIES CHARTS ----------
+
+    # Global scores (raw vs smoothed)
+    plt.figure(figsize=(7, 4))
     plt.plot(df["date"], df["score_global_raw"], label="Raw score")
     plt.plot(df["date"], df["score_global"], label="Smoothed score")
+    plt.axhline(50, linestyle="--", linewidth=0.8)
+    plt.axhline(65, linestyle="--", linewidth=0.8)
+    plt.axhline(80, linestyle="--", linewidth=0.8)
     plt.xlabel("Date")
     plt.ylabel("Global AI score")
     plt.title("Global AI Score (Raw vs Smoothed)")
@@ -704,10 +719,12 @@ def generate_dashboard(history_file: str, output_dir: str = "dashboard") -> None
 
     # Group scores
     group_cols = [c for c in df.columns if c.startswith("group_")]
+    groups_png = None
     if group_cols:
-        plt.figure()
+        plt.figure(figsize=(7, 4))
         for col in group_cols:
-            plt.plot(df["date"], df[col], label=col.replace("group_", ""))
+            label = col.replace("group_", "")
+            plt.plot(df["date"], df[col], label=label)
         plt.xlabel("Date")
         plt.ylabel("Group score")
         plt.title("AI Group Scores Over Time")
@@ -716,23 +733,239 @@ def generate_dashboard(history_file: str, output_dir: str = "dashboard") -> None
         groups_png = os.path.join(output_dir, "group_scores.png")
         plt.savefig(groups_png)
         plt.close()
-    else:
-        groups_png = None
 
-    # Simple HTML report
+    # ---------- LATEST SNAPSHOT & REGIME ----------
+
+    latest = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) >= 2 else None
+
+    latest_date = latest["date"].date()
+    latest_score = float(latest["score_global"])
+    latest_raw = float(latest["score_global_raw"])
+
+    delta_val: Optional[float] = None
+    delta_str = "N/A"
+    if prev is not None:
+        try:
+            delta_val = latest_score - float(prev["score_global"])
+            sign = "+" if delta_val >= 0 else ""
+            delta_str = f"{sign}{delta_val:.1f} pts vs previous"
+        except Exception:
+            delta_val = None
+
+    def regime_from_score(s: float) -> str:
+        if s >= 80:
+            return "Strong / Bullish AI Cycle"
+        if s >= 60:
+            return "Positive / Moderate AI Cycle"
+        if s >= 50:
+            return "AI Plateau / Normalization"
+        return "AI Stress / Risk Zone"
+
+    regime = snapshot.status if snapshot is not None else regime_from_score(latest_raw)
+    bubble = bubble_risk or "N/A"
+
+    # ---------- LATEST GROUP SCORES ----------
+
+    latest_groups: List[Tuple[str, float]] = []
+    for col in group_cols:
+        gname = col.replace("group_", "")
+        try:
+            val = float(latest[col])
+        except Exception:
+            val = float("nan")
+        latest_groups.append((gname, val))
+
+    latest_groups_sorted = sorted(latest_groups, key=lambda x: -x[1]) if latest_groups else []
+
+    # ---------- ALLOCATION DATA ----------
+
+    group_alloc_rows: List[Tuple[str, float]] = []
+    ticker_alloc_rows: List[Tuple[str, str, float]] = []
+
+    if allocation_weights is not None:
+        for gname, w in sorted(allocation_weights["groups"].items(), key=lambda x: -x[1]):
+            group_alloc_rows.append((gname, w))
+
+        for symbol, w in sorted(allocation_weights["tickers"].items(), key=lambda x: -x[1]):
+            name = AI_UNIVERSE[symbol].name
+            ticker_alloc_rows.append((symbol, name, w))
+
+    # ---------- INTERPRETATION & ACTIONS ----------
+
+    # Top / bottom groups
+    top_group = latest_groups_sorted[0][0] if latest_groups_sorted else "N/A"
+    bottom_group = latest_groups_sorted[-1][0] if len(latest_groups_sorted) >= 1 else "N/A"
+
+    actions: List[str] = []
+
+    if latest_score >= 80:
+        actions.append(
+            "Strong AI regime: keep your long-term allocation, avoid adding large new risk driven by euphoria."
+        )
+    elif latest_score >= 60:
+        actions.append(
+            "Moderately bullish AI regime: let your automatic long-term plan run, no need to time the market."
+        )
+    elif latest_score >= 50:
+        actions.append(
+            "Neutral / plateau regime: be more selective, reserve large new capital for clearer opportunities."
+        )
+    else:
+        actions.append(
+            "AI stress regime: only add gradually, if at all. Focus on quality names and long-term horizon."
+        )
+
+    if top_group != "N/A":
+        actions.append(f"Overweight high-scoring AI groups (e.g. {top_group}).")
+    if bottom_group != "N/A":
+        actions.append(f"Underweight or avoid adding to weaker groups (e.g. {bottom_group}).")
+
+    if bubble == "High":
+        actions.append(
+            "Bubble risk HIGH: avoid leverage, trim speculative positions, and prioritize balance sheet strength."
+        )
+    elif bubble == "Moderate":
+        actions.append(
+            "Bubble risk MODERATE: avoid aggressive new capital, focus on core holdings rather than fringe plays."
+        )
+    elif bubble == "Low":
+        actions.append(
+            "Bubble risk LOW: current optimism is supported by fundamentals and sentiment; no obvious excess."
+        )
+
+    # ---------- HTML LAYOUT (2-COLUMN) ----------
+
     html_path = os.path.join(output_dir, "index.html")
     with open(html_path, "w", encoding="utf-8") as f:
-        f.write("<html><head><title>AI Watch Dashboard</title></head><body>\n")
+        f.write("<html><head><title>AI Watch Dashboard</title>\n")
+        f.write(
+            "<style>"
+            "body{font-family:Arial,Helvetica,sans-serif;margin:20px;}"
+            "h1{margin-bottom:0.2rem;}"
+            ".small{font-size:0.85rem;color:#6b7280;}"
+            ".section{margin-bottom:2rem;}"
+            ".tag{display:inline-block;padding:4px 8px;border-radius:6px;font-size:0.85rem;margin-left:4px;}"
+            ".tag-green{background:#d1fae5;color:#065f46;}"
+            ".tag-yellow{background:#fef9c3;color:#854d0e;}"
+            ".tag-red{background:#fee2e2;color:#b91c1c;}"
+            "table{border-collapse:collapse;margin-top:0.5rem;}"
+            "th,td{border:1px solid #ddd;padding:6px 10px;font-size:0.9rem;}"
+            "th{background:#f3f4f6;text-align:left;}"
+            ".grid{display:grid;grid-template-columns:2fr 1.5fr;grid-gap:24px;align-items:flex-start;}"
+            ".grid-full{display:grid;grid-template-columns:1.4fr 1.6fr;grid-gap:24px;align-items:flex-start;}"
+            "ul{margin-top:0.4rem;}"
+            "@media(max-width:900px){.grid,.grid-full{grid-template-columns:1fr;}}"
+            "</style>\n"
+        )
+        f.write("</head><body>\n")
+
+        # HEADER
         f.write("<h1>AI Watch Dashboard</h1>\n")
+        f.write(f"<p class='small'>Last update: {latest_date}</p>\n")
+
+        # SUMMARY BLOCK
+        f.write("<div class='section'>\n")
+        f.write("<h2>Market Regime & Summary</h2>\n")
+
+        if latest_score >= 80:
+            tag_cls = "tag tag-green"
+            tag_txt = "Bullish"
+        elif latest_score >= 60:
+            tag_cls = "tag tag-yellow"
+            tag_txt = "Moderate"
+        elif latest_score >= 50:
+            tag_cls = "tag tag-yellow"
+            tag_txt = "Plateau"
+        else:
+            tag_cls = "tag tag-red"
+            tag_txt = "Stress"
+
+        f.write(
+            f"<p><strong>Global AI Score (smoothed):</strong> {latest_score:.1f} / 100 "
+            f"<span class='{tag_cls}'>{tag_txt}</span></p>\n"
+        )
+        f.write(f"<p><strong>Raw AI Score (today):</strong> {latest_raw:.1f} / 100</p>\n")
+        if delta_val is not None:
+            f.write(f"<p><strong>Change vs previous:</strong> {delta_str}</p>\n")
+        f.write(f"<p><strong>Regime:</strong> {regime}</p>\n")
+        f.write(f"<p><strong>Bubble risk (heuristic):</strong> {bubble}</p>\n")
+        f.write("</div>\n")
+
+        # GRID 1: Global score chart (left) + Actions (right)
+        f.write("<div class='section grid'>\n")
+
+        # LEFT: Global AI score chart
+        f.write("<div>\n")
         f.write("<h2>Global AI Score</h2>\n")
-        f.write(f'<img src="global_scores.png" alt="Global scores">\n')
+        f.write("<p class='small'>Raw vs smoothed score over time. Dashed lines mark key regime thresholds (50 / 65 / 80).</p>\n")
+        f.write('<img src="global_scores.png" alt="Global AI scores">\n')
+        f.write("</div>\n")
+
+        # RIGHT: Interpretation & Actions
+        f.write("<div>\n")
+        f.write("<h2>Interpretation & Actions</h2>\n")
+        f.write("<ul>\n")
+        for a in actions:
+            f.write(f"<li>{a}</li>\n")
+        f.write("</ul>\n")
+        f.write("</div>\n")
+
+        f.write("</div>\n")  # end grid
+
+        # GRID 2: Group chart (left) + tables / allocation (right)
+        f.write("<div class='section grid-full'>\n")
+
+        # LEFT: group scores chart
+        f.write("<div>\n")
+        f.write("<h2>AI Group Scores Over Time</h2>\n")
         if groups_png:
-            f.write("<h2>AI Group Scores</h2>\n")
-            f.write(f'<img src="group_scores.png" alt="Group scores">\n')
+            f.write("<p class='small'>Evolution of scores by AI segment (hyperscalers, GPU, semiconductors, consumer).</p>\n")
+            f.write('<img src="group_scores.png" alt="AI group scores over time">\n')
+        else:
+            f.write("<p class='small'>No group history available yet.</p>\n")
+        f.write("</div>\n")
+
+        # RIGHT: latest group scores + allocation engine
+        f.write("<div>\n")
+        f.write("<h2>Latest Group Scores</h2>\n")
+        if latest_groups_sorted:
+            f.write("<table>\n")
+            f.write("<tr><th>Group</th><th>Latest score</th></tr>\n")
+            for gname, val in latest_groups_sorted:
+                f.write(f"<tr><td>{gname}</td><td>{val:.1f}</td></tr>\n")
+            f.write("</table>\n")
+        else:
+            f.write("<p class='small'>No group scores available.</p>\n")
+
+        # Allocation engine tables
+        f.write("<h2>AI Allocation Engine</h2>\n")
+        if group_alloc_rows:
+            f.write("<h3>By group</h3>\n")
+            f.write("<table>\n")
+            f.write("<tr><th>Group</th><th>Suggested weight (of AI sleeve)</th></tr>\n")
+            for gname, w in group_alloc_rows:
+                f.write(f"<tr><td>{gname}</td><td>{w:.1f}%</td></tr>\n")
+            f.write("</table>\n")
+
+        if ticker_alloc_rows:
+            f.write("<h3>By ticker</h3>\n")
+            f.write("<table>\n")
+            f.write("<tr><th>Ticker</th><th>Name</th><th>Suggested weight (of AI sleeve)</th></tr>\n")
+            for symbol, name, w in ticker_alloc_rows:
+                f.write(f"<tr><td>{symbol}</td><td>{name}</td><td>{w:.1f}%</td></tr>\n")
+            f.write("</table>\n")
+
+        if not group_alloc_rows and not ticker_alloc_rows:
+            f.write("<p class='small'>No allocation data available for this run.</p>\n")
+
+        f.write("</div>\n")  # right side
+
+        f.write("</div>\n")  # end grid-full
+
         f.write("</body></html>\n")
 
     print(f"[INFO] Dashboard generated in: {output_dir}")
-
 
 # ========= DISPLAY =========
 
@@ -884,7 +1117,13 @@ def main() -> None:
 
     # Dashboard generation (controlled via env var for GitHub Actions)
     if os.getenv("GENERATE_DASHBOARD", "0") == "1":
-        generate_dashboard(HISTORY_FILE, output_dir="dashboard")
+        generate_dashboard(
+            HISTORY_FILE,
+            output_dir="dashboard",
+            snapshot=snap,
+            allocation_weights=allocation_weights,
+            bubble_risk=bubble_risk,
+        )
 
 
 if __name__ == "__main__":
