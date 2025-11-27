@@ -63,6 +63,182 @@ GLOBAL_NEWS_QUERY = "artificial intelligence data center GPU investment"
 # VADER sentiment analyzer (for news)
 ANALYZER = SentimentIntensityAnalyzer()
 
+METHOD_EXPLANATION_HTML = """
+<h2>Methodology: AI Watch Engine</h2>
+<p>
+This dashboard summarizes a rules-based process designed for long-term investors
+who want a simple, repeatable way to monitor the state of the AI equity cycle.
+It is not a trading system and it does not attempt to time short-term moves.
+</p>
+
+<ol>
+  <li><strong>Universe & Benchmark</strong>
+    <ul>
+      <li><em>Universe:</em> a small set of liquid, large-cap AI-related leaders:
+        MSFT, GOOGL, AMZN, META (hyperscalers / consumer), NVDA, AMD (GPU),
+        ASML, AVGO (semiconductors).</li>
+      <li><em>Benchmark:</em> the S&amp;P 500 (^GSPC) is used as the broad equity
+        reference.</li>
+    </ul>
+  </li>
+
+  <li><strong>Price data & performance windows</strong>
+    <ul>
+      <li>Daily adjusted prices are downloaded with yfinance.</li>
+      <li>For each stock and for the benchmark the script computes:
+        <ul>
+          <li>1-year performance (1Y)</li>
+          <li>3-month performance (3M)</li>
+          <li>1-month performance (1M)</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+
+  <li><strong>Performance scoring vs benchmark</strong>
+    <ul>
+      <li>For each stock, its 1Y performance is compared to the 1Y benchmark performance.</li>
+      <li>The spread = stock_1Y_return − benchmark_1Y_return.</li>
+      <li>This spread is mapped from roughly [-30%, +30%] to a 0–100 performance score:
+        values below -30% are floored near 0, values above +30% are capped near 100.</li>
+      <li>This produces a normalized performance score that says:
+        “how much this AI name has out- or underperformed the broad market over 1 year.”</li>
+    </ul>
+  </li>
+
+  <li><strong>News sentiment using VADER + NewsAPI</strong>
+    <ul>
+      <li>For each ticker, the script queries NewsAPI with an AI-related query
+        (ticker + terms like "artificial intelligence", "data center", "GPU").</li>
+      <li>Titles + descriptions of recent articles are fed into the
+        VADER sentiment analyzer (compound score in [-1, 1]).</li>
+      <li>An article is considered positive if compound &gt; 0.05.</li>
+      <li>The ticker’s news sentiment score is the fraction of positive articles,
+        scaled to 0–100.</li>
+      <li>A similar global query is run for “AI / data center / GPU investment”,
+        giving a global AI news sentiment ratio.</li>
+      <li>If the API fails or returns nothing, sentiment falls back to a neutral value.</li>
+    </ul>
+  </li>
+
+  <li><strong>Per-ticker total score</strong>
+    <ul>
+      <li>Each stock gets:
+        <ul>
+          <li>a performance score (vs benchmark), and</li>
+          <li>a news sentiment score (0–100, or None if unavailable).</li>
+        </ul>
+      </li>
+      <li>If news sentiment is available, total_score = 0.6 × perf_score + 0.4 × news_score.</li>
+      <li>If news sentiment is missing, total_score = perf_score.</li>
+      <li>This keeps the main driver as actual performance, with news used as a secondary tilt.</li>
+    </ul>
+  </li>
+
+  <li><strong>Groups & group scores</strong>
+    <ul>
+      <li>Each stock belongs to an AI segment: hyperscaler, consumer, gpu, semi.</li>
+      <li>Within each group, total scores are aggregated using simple weights
+        (e.g. NVDA has a slightly higher weight inside the GPU group).</li>
+      <li>Result: a group-level score (0–100) for each AI segment.</li>
+      <li>These group scores are what you see in the “AI Group Scores” table and charts.</li>
+    </ul>
+  </li>
+
+  <li><strong>Global AI score (raw) & smoothing</strong>
+    <ul>
+      <li>Several ingredients are combined into a single raw global AI score:
+        <ul>
+          <li>average group score (core of the signal)</li>
+          <li>spread of average AI 1Y performance vs benchmark</li>
+          <li>global AI news sentiment score</li>
+        </ul>
+      </li>
+      <li>The raw global score is then smoothed over time using an
+        Exponential Moving Average (EMA) with a configurable alpha.</li>
+      <li>The smoothed score is what you see as “Global AI Score (smoothed)”.</li>
+      <li>The raw score is the “snapshot of today”, more volatile and sensitive to new data.</li>
+    </ul>
+  </li>
+
+  <li><strong>Bubble risk heuristic</strong>
+    <ul>
+      <li>The script uses a simple 3-point heuristic based on:
+        <ul>
+          <li>average group score</li>
+          <li>AI vs benchmark performance spread</li>
+          <li>global news sentiment level</li>
+        </ul>
+      </li>
+      <li>If all three are elevated at the same time, bubble risk is flagged as <em>High</em>.</li>
+      <li>Two out of three elevated → <em>Moderate</em> risk.</li>
+      <li>One out of three → <em>Low</em> risk.</li>
+      <li>None elevated → <em>Very Low</em> risk.</li>
+      <li>This is intentionally coarse and should be read as “risk of overheating”, not a precise timing signal.</li>
+    </ul>
+  </li>
+
+  <li><strong>Allocation engine (groups & tickers)</strong>
+    <ul>
+      <li>The allocation engine is meant to suggest how to spread the “AI sleeve”
+        of a portfolio, not the whole portfolio.</li>
+      <li>First, each group gets a base weight proportional to its score, with
+        mild compression so that strong groups do not become unrealistically dominant.</li>
+      <li>Then, inside each group, tickers are weighted by a combination of
+        total_score and their internal weight (e.g. NVDA slightly more than AMD).</li>
+      <li>The result is:
+        <ul>
+          <li>Suggested % by group (of the AI sleeve)</li>
+          <li>Suggested % by ticker (of the AI sleeve)</li>
+        </ul>
+      </li>
+      <li>The allocation engine does <strong>not</strong> tell you to constantly add to winners.
+        Instead, it treats high-scoring groups as core exposures to maintain, and lower-scoring or
+        deteriorating groups as segments where you should avoid adding aggressively.</li>
+    </ul>
+  </li>
+
+  <li><strong>Regime & interpretation logic</strong>
+    <ul>
+      <li>The global smoothed score defines the regime:
+        <ul>
+          <li>&gt;= 80 → strong / bullish AI cycle</li>
+          <li>60–79 → positive / moderate AI cycle</li>
+          <li>50–59 → plateau / normalization</li>
+          <li>&lt; 50 → stress / risk zone</li>
+        </ul>
+      </li>
+      <li>The dashboard then combines:
+        <ul>
+          <li>score level (where we are in the cycle)</li>
+          <li>change vs previous run (are we accelerating, stabilizing, or deteriorating?)</li>
+          <li>group score rankings (which segments are leading or lagging)</li>
+          <li>bubble risk estimation</li>
+        </ul>
+      </li>
+      <li>From these it generates a qualitative interpretation such as:
+        “moderately bullish AI regime: keep your long-term plan running, do not try to time the top”,
+        and group-level guidance (“leaders to maintain”, “laggards to avoid adding to for now”).</li>
+    </ul>
+  </li>
+
+  <li><strong>Alerts & long-term focus</strong>
+    <ul>
+      <li>Alerts are triggered if:
+        <ul>
+          <li>the global score drops below a stress threshold,</li>
+          <li>the global score exceeds a high euphoria threshold,</li>
+          <li>the score moves very quickly (large positive or negative change vs last run).</li>
+        </ul>
+      </li>
+      <li>The entire system is intentionally slow-moving:
+        it is designed for long-term investors doing periodic allocation checks,
+        not intraday trading or leveraged speculation.</li>
+      <li>All outputs are <strong>descriptive and educational</strong>, not financial advice.</li>
+    </ul>
+  </li>
+</ol>
+"""
 
 # ========= AI UNIVERSE =========
 
@@ -679,7 +855,7 @@ def generate_dashboard(
     - Latest snapshot summary (regime, score, delta)
     - Latest group scores table
     - Allocation engine (groups + tickers) tables
-    - Interpretation & actions
+    - Interpretation & actions based on level, change and group ranking
     """
     if not os.path.exists(history_file):
         print("[INFO] No history file yet, skipping dashboard generation.")
@@ -705,6 +881,7 @@ def generate_dashboard(
     plt.figure(figsize=(7, 4))
     plt.plot(df["date"], df["score_global_raw"], label="Raw score")
     plt.plot(df["date"], df["score_global"], label="Smoothed score")
+    # regime thresholds
     plt.axhline(50, linestyle="--", linewidth=0.8)
     plt.axhline(65, linestyle="--", linewidth=0.8)
     plt.axhline(80, linestyle="--", linewidth=0.8)
@@ -765,9 +942,11 @@ def generate_dashboard(
     regime = snapshot.status if snapshot is not None else regime_from_score(latest_raw)
     bubble = bubble_risk or "N/A"
 
-    # ---------- LATEST GROUP SCORES ----------
+    # ---------- LATEST GROUP SCORES & DYNAMICS ----------
 
     latest_groups: List[Tuple[str, float]] = []
+    group_deltas: Dict[str, float] = {}
+
     for col in group_cols:
         gname = col.replace("group_", "")
         try:
@@ -775,6 +954,15 @@ def generate_dashboard(
         except Exception:
             val = float("nan")
         latest_groups.append((gname, val))
+
+        if prev is not None:
+            try:
+                prev_val = float(prev[col])
+                group_deltas[gname] = val - prev_val
+            except Exception:
+                group_deltas[gname] = 0.0
+        else:
+            group_deltas[gname] = 0.0
 
     latest_groups_sorted = sorted(latest_groups, key=lambda x: -x[1]) if latest_groups else []
 
@@ -791,50 +979,102 @@ def generate_dashboard(
             name = AI_UNIVERSE[symbol].name
             ticker_alloc_rows.append((symbol, name, w))
 
-    # ---------- INTERPRETATION & ACTIONS ----------
+    # ---------- GROUP STATE CLASSIFICATION (FOR TEXT ONLY) ----------
 
-    # Top / bottom groups
-    top_group = latest_groups_sorted[0][0] if latest_groups_sorted else "N/A"
-    bottom_group = latest_groups_sorted[-1][0] if len(latest_groups_sorted) >= 1 else "N/A"
+    def classify_group(score: float, delta: float) -> str:
+        """
+        Very simple qualitative classification:
+        - "core_maintain": high score, stable or slightly up
+        - "improving": mid score, clearly improving
+        - "weak": low score and/or deteriorating
+        - "hot": very high and accelerating
+        """
+        if score >= 80 and delta > 4:
+            return "hot"
+        if score >= 75:
+            return "core_maintain"
+        if 60 <= score < 75 and delta > 2:
+            return "improving"
+        if score < 55 and delta <= 0:
+            return "weak"
+        return "neutral"
+
+    group_states: Dict[str, str] = {}
+    for gname, val in latest_groups:
+        d = group_deltas.get(gname, 0.0)
+        group_states[gname] = classify_group(val, d)
+
+    # ---------- INTERPRETATION & ACTIONS ----------
 
     actions: List[str] = []
 
+    # Global regime orientation
     if latest_score >= 80:
         actions.append(
-            "Strong AI regime: keep your long-term allocation, avoid adding large new risk driven by euphoria."
+            "AI regime is strong and mature: keep your core allocation, avoid chasing short-term strength or adding aggressive new risk."
         )
     elif latest_score >= 60:
         actions.append(
-            "Moderately bullish AI regime: let your automatic long-term plan run, no need to time the market."
+            "Moderately bullish AI regime: let your automatic long-term plan run, and avoid overreacting to short-term noise."
         )
     elif latest_score >= 50:
         actions.append(
-            "Neutral / plateau regime: be more selective, reserve large new capital for clearer opportunities."
+            "Plateau / normalization regime: stay invested but be more selective with new capital."
         )
     else:
         actions.append(
-            "AI stress regime: only add gradually, if at all. Focus on quality names and long-term horizon."
+            "Stress regime: if you add at all, do it gradually and focus on quality, not speculative names."
         )
 
-    if top_group != "N/A":
-        actions.append(f"Overweight high-scoring AI groups (e.g. {top_group}).")
-    if bottom_group != "N/A":
-        actions.append(f"Underweight or avoid adding to weaker groups (e.g. {bottom_group}).")
+    # Group-based guidance (without naive “buy what’s already hot”)
+    core_groups = [g for g, s in group_states.items() if s == "core_maintain"]
+    improving_groups = [g for g, s in group_states.items() if s == "improving"]
+    weak_groups = [g for g, s in group_states.items() if s == "weak"]
+    hot_groups = [g for g, s in group_states.items() if s == "hot"]
 
+    if core_groups:
+        actions.append(
+            "Treat high-scoring groups as core holdings to maintain (e.g. "
+            + ", ".join(core_groups)
+            + "), rather than segments to aggressively increase at any price."
+        )
+
+    if improving_groups:
+        actions.append(
+            "If you decide to increase AI exposure, prioritize groups that are improving from mid levels (e.g. "
+            + ", ".join(improving_groups)
+            + ") instead of chasing already extended leaders."
+        )
+
+    if weak_groups:
+        actions.append(
+            "Avoid adding to structurally weak or deteriorating groups for now (e.g. "
+            + ", ".join(weak_groups)
+            + "); wait for stabilization or genuine improvement."
+        )
+
+    if hot_groups:
+        actions.append(
+            "Very strong and accelerating groups (e.g. "
+            + ", ".join(hot_groups)
+            + ") should be monitored for potential overheating; consider holding rather than adding aggressively."
+        )
+
+    # Bubble risk nuance
     if bubble == "High":
         actions.append(
-            "Bubble risk HIGH: avoid leverage, trim speculative positions, and prioritize balance sheet strength."
+            "Bubble risk is HIGH: avoid leverage, reduce speculative positions, and favor balance-sheet strength and diversification."
         )
     elif bubble == "Moderate":
         actions.append(
-            "Bubble risk MODERATE: avoid aggressive new capital, focus on core holdings rather than fringe plays."
+            "Bubble risk is MODERATE: avoid aggressive new capital, focus on core holdings rather than fringe or highly speculative names."
         )
     elif bubble == "Low":
         actions.append(
-            "Bubble risk LOW: current optimism is supported by fundamentals and sentiment; no obvious excess."
+            "Bubble risk is LOW: current optimism appears broadly supported by fundamentals and sentiment, but discipline is still required."
         )
 
-    # ---------- HTML LAYOUT (2-COLUMN) ----------
+    # ---------- HTML LAYOUT (2 COLUMNS + METHODOLOGY) ----------
 
     html_path = os.path.join(output_dir, "index.html")
     with open(html_path, "w", encoding="utf-8") as f:
@@ -931,9 +1171,11 @@ def generate_dashboard(
         f.write("<h2>Latest Group Scores</h2>\n")
         if latest_groups_sorted:
             f.write("<table>\n")
-            f.write("<tr><th>Group</th><th>Latest score</th></tr>\n")
+            f.write("<tr><th>Group</th><th>Latest score</th><th>1-step change</th></tr>\n")
             for gname, val in latest_groups_sorted:
-                f.write(f"<tr><td>{gname}</td><td>{val:.1f}</td></tr>\n")
+                d = group_deltas.get(gname, 0.0)
+                sign = "+" if d >= 0 else ""
+                f.write(f"<tr><td>{gname}</td><td>{val:.1f}</td><td>{sign}{d:.1f}</td></tr>\n")
             f.write("</table>\n")
         else:
             f.write("<p class='small'>No group scores available.</p>\n")
@@ -963,9 +1205,15 @@ def generate_dashboard(
 
         f.write("</div>\n")  # end grid-full
 
+        # ---- Methodology section (comment out if you don't want it) ----
+        f.write("<div class='section'>\n")
+        f.write(METHOD_EXPLANATION_HTML)
+        f.write("</div>\n")
+
         f.write("</body></html>\n")
 
     print(f"[INFO] Dashboard generated in: {output_dir}")
+
 
 # ========= DISPLAY =========
 

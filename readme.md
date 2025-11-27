@@ -1,95 +1,48 @@
-# AI Watch Pro — Radar IA Investisseur Long Terme
+# AI Watch Pro
 
-AI Watch Pro est un outil personnel d’analyse macro des géants de l’intelligence artificielle.
-Il te donne une lecture **claire, synthétique et orientée investissement long terme** du cycle IA mondial.
+AI Watch Pro is a small, opinionated tool for long-term investors who want a
+simple way to monitor the state of the "AI trade" across a handful of liquid,
+large-cap leaders.
 
-L’objectif n’est pas de prédire les cours, mais de répondre à ces questions :
-
-> Est-ce que l’IA est en phase d’expansion ?
->  
-> Sommes-nous en surchauffe ?
->  
-> Faut-il juste tenir… ou au contraire étreindre le cycle ?
+It is **not** a trading system, and it does **not** attempt to time short-term
+moves. Instead, it produces a daily (or periodic) "AI radar" snapshot, plus a
+static web dashboard that can be published via GitHub Pages.
 
 ---
 
-## ✅ Ce que fait l’outil
+## Features
 
-### Analyse financière
-- Télécharge les performances boursières de :
-  - MSFT, GOOGL, AMZN
-  - META
-  - NVDA, AMD
-  - ASML, AVGO
-- Compare leurs performances à 1 an au S&P 500
-- Calcule :
-  - croissance IA moyenne
-  - surperformance vs benchmark
-  - score par groupe
-  - score global IA
-
----
-
-### Analyse de sentiment (news)
-Si tu fournis une clé NewsAPI :
-- Analyse des news IA mondiales
-- Analyse par entreprise
-- Transformation en **NewsScore** (0 → 100)
-- Intégration dans le score final
-
----
-
-### Classification automatique
-Chaque exécution produit :
-
-| Signal | Signification |
-|--------|----------------|
-| 🟢 | Zone favorable |
-| 🟡 | Neutre / plateau |
-| 🔴 | Stress / prudence |
-| ▲ | Score en amélioration |
-| ▼ | Score en baisse |
-| ▶ | Stable |
+- Monitors a small AI universe:
+  - Hyperscalers: MSFT, GOOGL, AMZN
+  - Consumer AI: META
+  - GPU: NVDA, AMD
+  - Semiconductors: ASML, AVGO
+- Compares AI performance vs the S&P 500 (^GSPC)
+- Computes:
+  - 1Y / 3M / 1M performance windows
+  - Per-ticker performance scores vs benchmark
+  - Per-ticker news sentiment scores (via NewsAPI + VADER)
+  - Per-group AI scores (hyperscaler / consumer / GPU / semi)
+  - Global AI score (raw and smoothed)
+  - Simple bubble-risk heuristic
+- Maintains a CSV history (`ai_watch_history.csv`)
+- Generates a static HTML dashboard (`dashboard/index.html`) with:
+  - Market regime & summary
+  - Global AI score chart (raw vs smoothed)
+  - AI group scores over time
+  - AI allocation engine (by group and by ticker)
+  - Interpretation & actions commentary
+  - Optional methodology section explaining the full logic
+- Can be run:
+  - locally, from the command line, or
+  - automatically via GitHub Actions + GitHub Pages
 
 ---
 
-### Statut macro automatique
+## Installation (local use)
 
-Exemple :
-
-- "Cycle IA fort / haussier"
-- "IA en normalisation"
-- "IA en stress"
-- "Cycle positif mais lent"
-
----
-
-### Recommandation long terme
-
-Tu reçois une phrase de synthèse, par exemple :
-
-> Cycle IA modérément haussier : ne rien faire de spécial, laisser tourner ton plan automatique.
-
-ou
-
-> Zone de stress IA : n’ajouter que progressivement, éviter toute décision émotionnelle.
-
----
-
-### Historique et tendance
-À chaque lancement :
-- Enregistre les scores dans `ai_watch_history.csv`
-- Compare automatiquement au dernier snapshot
-- Génère des alertes si :
-  - baisse brutale (> 15 points)
-  - euphorie (> 85)
-  - zone de danger (< 55)
-
----
-
-## 🔧 Installation
-
-### 1. Dépendances
+### 1. Clone the repository
 
 ```bash
-pip install yfinance pandas requests
+git clone https://github.com/<your-user>/ai_watch.git
+cd ai_watch

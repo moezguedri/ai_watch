@@ -1,0 +1,12 @@
+yfinance>=0.2.40
+pandas>=2.0.0
+requests>=2.31.0
+vaderSentiment>=3.3.2
+matplotlib>=3.8.0
+
+numpy>=1.26.0
+yfinance>=0.2.40
+pandas>=2.0.0
+requests>=2.31.0
+vaderSentiment>=3.3.2
+matplotlib>=3.8.0
